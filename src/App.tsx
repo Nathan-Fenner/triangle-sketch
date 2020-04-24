@@ -44,6 +44,10 @@ class P {
   public args(): [number, number] {
     return [this.x, this.y];
   }
+
+  public shift(dx: number, dy: number): P {
+    return new P(this.x + dx, this.y + dy);
+  }
 }
 
 /**
@@ -118,7 +122,7 @@ class Pt3 {
    * that project to the same point; use with caution.
    */
   public depth(): number {
-    return -this.cy - this.cz * 1.01 + this.cx;
+    return -this.cy - this.cz * 1.01 + this.cx * 1.01;
   }
   public shift(dx: number, dy: number, dz: number): Pt3 {
     return new Pt3(this.cx + dx, this.cy + dy, this.cz + dz);
@@ -267,52 +271,71 @@ function drawMesh(
     ...[...mesh.left].map(([t, item]) => ({
       ...item,
       t,
+      effect: false,
+      side: "left" as const,
+    })),
+    ...[...mesh.left].map(([t, item]) => ({
+      ...item,
+      t,
+      effect: true,
+      depth: item.depth - 0.5,
       side: "left" as const,
     })),
     ...[...mesh.right].map(([t, item]) => ({
       ...item,
+      effect: false,
+      t,
+      side: "right" as const,
+    })),
+    ...[...mesh.right].map(([t, item]) => ({
+      ...item,
+      effect: true,
+      depth: item.depth - 0.5,
       t,
       side: "right" as const,
     })),
   ];
   triangles.sort((a, b) => {
+    // return Math.random() - 0.5;
     return b.depth - a.depth;
   });
 
   triangles.forEach(item => {
-    if (item.side === "left") {
-      fillUpLeft(ctx, item.t, item.color);
-    } else {
-      fillUpRight(ctx, item.t, item.color);
+    if (!item.effect) {
+      if (item.side === "left") {
+        fillUpLeft(ctx, item.t, item.color);
+      } else {
+        fillUpRight(ctx, item.t, item.color);
+      }
     }
-    if (item.style === "grass") {
+    if (item.effect && item.style === "grass") {
       const c1 = triangleCorner1(item.t, item.side);
       const c2 = triangleCorner2(item.t, item.side);
       const c3 = item.t.pt();
-
-      const at = triangleCenter(item.t, item.side);
-      ctx.fillStyle = rgb(...item.color);
 
       const onEdge1 = (r: number) => {
         return pt(c1.x * r + c2.x * (1 - r), c1.y * r + c2.y * (1 - r));
       };
       const onEdge2 = (r: number) => {
-        return pt(c2.x * r + c3.x * (1 - r), c2.y * r + c3.y * (1 - r));
+        if (item.side === "right") {
+          return pt(c2.x * r + c3.x * (1 - r), c2.y * r + c3.y * (1 - r));
+        } else {
+          return pt(c3.x * r + c1.x * (1 - r), c3.y * r + c1.y * (1 - r));
+        }
       };
 
+      ctx.fillStyle = rgb(...item.color);
       for (let i = 0; i < 12; i++) {
         const onEdge = i % 2 === 0 ? onEdge1 : onEdge2;
         const r = Math.random() * 0.8 + 0.1;
         const edge1 = onEdge(r - 0.1);
         const edge2 = onEdge(r + 0.1);
         const edgeMid = onEdge(r);
-        const edgeOut = pt(
-          edgeMid.x - (edge2.y - edge1.y) * 0.5,
-          edgeMid.y + (edge2.x - edge1.x) * 0.5,
-        );
+        const out = pt(-(edge2.y - edge1.y), edge2.x - edge1.x);
+        const edgeOut = pt(edgeMid.x + out.x * 0.5, edgeMid.y + out.y * 0.5);
         ctx.beginPath();
-        ctx.moveTo(...edge1.args());
-        ctx.lineTo(...edge2.args());
+        ctx.moveTo(...edge1.shift(-out.x * 0.2, -out.y * 0.2).args());
+        ctx.lineTo(...edge2.shift(-out.x * 0.2, -out.y * 0.2).args());
         ctx.lineTo(...edgeOut.args());
         ctx.closePath();
         ctx.fill();
@@ -398,7 +421,7 @@ const surfaceColors = {
         [
           [100 / 255, 30 / 255 / 3, 76 / 255],
           [183 / 255, 55 / 255, 146 / 255],
-          [190 / 255, 185 / 255, 220 / 255],
+          [190 / 255, 150 / 255, 220 / 255],
         ],
         v,
       ),
@@ -414,9 +437,9 @@ const surfaceColors = {
     left: (v: number) =>
       interpolateRGB(
         [
-          [0.6, 0.5, 0.6],
-          [0.9, 0.7, 0.8],
-          [0.95, 0.8, 0.85],
+          [0.6, 0.5, 0.65],
+          [0.9, 0.7, 0.85],
+          [0.95, 0.8, 0.9],
         ],
         v,
       ),
@@ -571,10 +594,13 @@ function drawScene(
     cubeDepth(depthMesh, cube, {
       top: {
         style: "grass",
-        color: surface.top(
-          (castSunRay(cubes, cube.shift(0, 1, 0)) ? 0 : 0.3) +
-            cube.cy / 20 +
-            0.08,
+        color: perturbColor(
+          surface.top(
+            (castSunRay(cubes, cube.shift(0, 1, 0)) ? 0 : 0.3) +
+              cube.cy / 20 +
+              0.08,
+          ),
+          0.05,
         ),
       },
       right: {
@@ -585,7 +611,10 @@ function drawScene(
             0.25,
         ),
       },
-      left: { style: "stone", color: surface.left(cube.cx / 30) },
+      left: {
+        style: "stone",
+        color: surface.left(cube.cx / 30),
+      },
     });
   });
 
@@ -600,12 +629,17 @@ function App() {
 
   React.useLayoutEffect(() => {
     const ctx = canvasRef.current.getContext("2d")!;
-    const offscreen = document.createElement("canvas");
-    offscreen.width = canvasRef.current.width;
-    offscreen.height = canvasRef.current.height;
-    ctx.clearRect(0, 0, 800, 800);
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    ctx.save();
+    ctx.scale(2, 2);
     drawScene(ctx, cubes, surface);
-    const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height);
+    ctx.restore();
+    const data = ctx.getImageData(
+      0,
+      0,
+      canvasRef.current.width,
+      canvasRef.current.height,
+    );
     for (let i = 0; i < data.height * data.height; i++) {
       data.data[4 * i + 3] = 255;
     }
@@ -613,7 +647,7 @@ function App() {
   }, [surface, cubes]);
   return (
     <div className="app">
-      <canvas ref={canvasRef} width={800} height={800} />
+      <canvas ref={canvasRef} width={1600} height={1600} />
       <div style={{ padding: 24, minWidth: 300 }}>
         <div>
           {Object.keys(scenes).map(name => (
