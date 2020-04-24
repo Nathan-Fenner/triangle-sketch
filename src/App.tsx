@@ -118,7 +118,7 @@ class Pt3 {
    * that project to the same point; use with caution.
    */
   public depth(): number {
-    return -this.cy - this.cz * 0.01 + this.cx * 0.01;
+    return -this.cy - this.cz + this.cx;
   }
   public shift(dx: number, dy: number, dz: number): Pt3 {
     return new Pt3(this.cx + dx, this.cy + dy, this.cz + dz);
@@ -151,16 +151,12 @@ function fillUpRight(
   color: readonly [number, number, number],
 ) {
   ctx.fillStyle = rgb(...color);
-  ctx.strokeStyle = rgb(...color);
   ctx.beginPath();
   ctx.moveTo(...c.pt().args());
   ctx.lineTo(...c.shift(0, 1).pt().args());
   ctx.lineTo(...c.shift(1, 0).pt().args());
   ctx.closePath();
   ctx.fill();
-  // The stroke is needed to fill gaps between triangles;
-  // however, this introduces other artifacts.
-  ctx.stroke();
 }
 
 /**
@@ -173,16 +169,12 @@ function fillUpLeft(
   color: readonly [number, number, number],
 ) {
   ctx.fillStyle = rgb(...color);
-  ctx.strokeStyle = rgb(...color);
   ctx.beginPath();
   ctx.moveTo(...c.pt().args());
   ctx.lineTo(...c.shift(-1, 1).pt().args());
   ctx.lineTo(...c.shift(0, 1).pt().args());
   ctx.closePath();
   ctx.fill();
-  // The stroke is needed to fill gaps between triangles;
-  // however, this introduces other artifacts.
-  ctx.stroke();
 }
 
 /**
@@ -505,7 +497,7 @@ function drawScene(
     });
   });
 
-  const mesh = depthMesh.map(({ color }) => perturbColor(color, 0.015));
+  const mesh = depthMesh.map(({ color }) => color);
   drawMesh(ctx, mesh);
 }
 
@@ -517,13 +509,21 @@ function App() {
 
   React.useLayoutEffect(() => {
     const ctx = canvasRef.current.getContext("2d")!;
+    const offscreen = document.createElement("canvas");
+    offscreen.width = canvasRef.current.width;
+    offscreen.height = canvasRef.current.height;
     ctx.clearRect(0, 0, 800, 800);
     drawScene(ctx, cubes, surface);
+    const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height);
+    for (let i = 0; i < data.height * data.height; i++) {
+      data.data[4 * i + 3] = 255;
+    }
+    ctx.putImageData(data, 0, 0);
   }, [surface, cubes]);
   return (
     <div className="app">
       <canvas ref={canvasRef} width={800} height={800} />
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: 24, minWidth: 300 }}>
         <div>
           {Object.keys(scenes).map(name => (
             <button
