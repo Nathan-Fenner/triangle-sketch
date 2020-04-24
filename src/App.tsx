@@ -118,7 +118,7 @@ class Pt3 {
    * that project to the same point; use with caution.
    */
   public depth(): number {
-    return -this.cy - this.cz + this.cx;
+    return -this.cy - this.cz * 1.01 + this.cx;
   }
   public shift(dx: number, dy: number, dz: number): Pt3 {
     return new Pt3(this.cx + dx, this.cy + dy, this.cz + dz);
@@ -157,6 +157,35 @@ function fillUpRight(
   ctx.lineTo(...c.shift(1, 0).pt().args());
   ctx.closePath();
   ctx.fill();
+}
+
+function triangleCorner1(t: TriPt, side: "left" | "right"): P {
+  if (side === "left") {
+    return t.shift(-1, 1).pt();
+  } else {
+    return t.shift(0, 1).pt();
+  }
+}
+function triangleCorner2(t: TriPt, side: "left" | "right"): P {
+  if (side === "left") {
+    return t.shift(0, 1).pt();
+  } else {
+    return t.shift(1, 0).pt();
+  }
+}
+
+function triangleCenter(t: TriPt, side: "left" | "right"): P {
+  if (side === "left") {
+    const c1 = t.pt();
+    const c2 = t.shift(-1, 1).pt();
+    const c3 = t.shift(0, 1).pt();
+    return pt((c1.x + c2.x + c3.x) / 3, (c1.y + c2.y + c3.y) / 3);
+  } else {
+    const c1 = t.pt();
+    const c2 = t.shift(0, 1).pt();
+    const c3 = t.shift(1, 0).pt();
+    return pt((c1.x + c2.x + c3.x) / 3, (c1.y + c2.y + c3.y) / 3);
+  }
 }
 
 /**
@@ -232,14 +261,64 @@ class Mesh<T> {
  */
 function drawMesh(
   ctx: CanvasRenderingContext2D,
-  mesh: Mesh<readonly [number, number, number]>,
+  mesh: Mesh<{ depth: number; color: RGB; style: "grass" | "stone" }>,
 ) {
-  for (const [t, color] of mesh.left) {
-    fillUpLeft(ctx, t, color);
-  }
-  for (const [t, color] of mesh.right) {
-    fillUpRight(ctx, t, color);
-  }
+  const triangles = [
+    ...[...mesh.left].map(([t, item]) => ({
+      ...item,
+      t,
+      side: "left" as const,
+    })),
+    ...[...mesh.right].map(([t, item]) => ({
+      ...item,
+      t,
+      side: "right" as const,
+    })),
+  ];
+  triangles.sort((a, b) => {
+    return b.depth - a.depth;
+  });
+
+  triangles.forEach(item => {
+    if (item.side === "left") {
+      fillUpLeft(ctx, item.t, item.color);
+    } else {
+      fillUpRight(ctx, item.t, item.color);
+    }
+    if (item.style === "grass") {
+      const c1 = triangleCorner1(item.t, item.side);
+      const c2 = triangleCorner2(item.t, item.side);
+      const c3 = item.t.pt();
+
+      const at = triangleCenter(item.t, item.side);
+      ctx.fillStyle = rgb(...item.color);
+
+      const onEdge1 = (r: number) => {
+        return pt(c1.x * r + c2.x * (1 - r), c1.y * r + c2.y * (1 - r));
+      };
+      const onEdge2 = (r: number) => {
+        return pt(c2.x * r + c3.x * (1 - r), c2.y * r + c3.y * (1 - r));
+      };
+
+      for (let i = 0; i < 12; i++) {
+        const onEdge = i % 2 === 0 ? onEdge1 : onEdge2;
+        const r = Math.random() * 0.8 + 0.1;
+        const edge1 = onEdge(r - 0.1);
+        const edge2 = onEdge(r + 0.1);
+        const edgeMid = onEdge(r);
+        const edgeOut = pt(
+          edgeMid.x - (edge2.y - edge1.y) * 0.5,
+          edgeMid.y + (edge2.x - edge1.x) * 0.5,
+        );
+        ctx.beginPath();
+        ctx.moveTo(...edge1.args());
+        ctx.lineTo(...edge2.args());
+        ctx.lineTo(...edgeOut.args());
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  });
 }
 
 /**
@@ -344,6 +423,12 @@ const surfaceColors = {
   },
 };
 
+type Triplet<T> = {
+  top: T;
+  right: T;
+  left: T;
+};
+
 /**
  * `cubeDepth` stamps a cube onto the `Mesh` and stores depth information.
  * The cube will not be stamped in front of nearer values.
@@ -351,26 +436,26 @@ const surfaceColors = {
  * @param p
  * @param surface
  */
-function cubeDepth<T>(
-  mesh: Mesh<{ depth: number; color: T }>,
+function cubeDepth<Style>(
+  mesh: Mesh<{ depth: number; color: RGB; style: Style }>,
   p: Pt3,
-  surface: { top: T; right: T; left: T },
+  surface: Triplet<{ color: RGB; style: Style }>,
 ): void {
   cubeFace(mesh, p.tri(), "up", old => {
     if (!old || old.depth > p.depth()) {
-      return { depth: p.depth(), color: surface.top };
+      return { depth: p.depth(), ...surface.top };
     }
     return old;
   });
   cubeFace(mesh, p.tri(), "right", old => {
     if (!old || old.depth > p.depth()) {
-      return { depth: p.depth(), color: surface.right };
+      return { depth: p.depth(), ...surface.right };
     }
     return old;
   });
   cubeFace(mesh, p.tri(), "left", old => {
     if (!old || old.depth > p.depth()) {
-      return { depth: p.depth(), color: surface.left };
+      return { depth: p.depth(), ...surface.left };
     }
     return old;
   });
@@ -479,26 +564,32 @@ function drawScene(
   const depthMesh = new Mesh<{
     color: readonly [number, number, number];
     depth: number;
+    style: "grass" | "stone";
   }>();
 
   cubes.forEach(cube => {
     cubeDepth(depthMesh, cube, {
-      top: surface.top(
-        (castSunRay(cubes, cube.shift(0, 1, 0)) ? 0 : 0.2) +
-          cube.cy / 20 +
-          0.08,
-      ),
-      right: surface.right(
-        (castSunRay(cubes, cube.shift(0, 0, 1)) ? 0 : 0.2) +
-          cube.cz / 20 +
-          0.25,
-      ),
-      left: surface.left(cube.cx / 30),
+      top: {
+        style: "grass",
+        color: surface.top(
+          (castSunRay(cubes, cube.shift(0, 1, 0)) ? 0 : 0.3) +
+            cube.cy / 20 +
+            0.08,
+        ),
+      },
+      right: {
+        style: "stone",
+        color: surface.right(
+          (castSunRay(cubes, cube.shift(0, 0, 1)) ? 0 : 0.3) +
+            cube.cz / 20 +
+            0.25,
+        ),
+      },
+      left: { style: "stone", color: surface.left(cube.cx / 30) },
     });
   });
 
-  const mesh = depthMesh.map(({ color }) => color);
-  drawMesh(ctx, mesh);
+  drawMesh(ctx, depthMesh);
 }
 
 function App() {
