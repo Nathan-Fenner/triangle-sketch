@@ -1,7 +1,7 @@
 
-![desert_canyon](https://i.imgur.com/evKapZ2.png)
+![desert_canyon](https://i.imgur.com/RRCRmEk.png)
 
-![island](https://i.imgur.com/nuyIKki.png)
+![island](https://i.imgur.com/GB8V1S5.png)
 
 ## How to run
 
